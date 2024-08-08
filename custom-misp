@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+import sys
+import os
+from socket import socket, AF_UNIX, SOCK_DGRAM
+import requests
+import json
+
+# Set up paths and constants
+socket_addr = '/var/ossec/queue/sockets/queue'
+
+# Function to send event
+def send_event(msg, agent=None):
+    if not agent or agent["id"] == "000":
+        string = '1:misp:{0}'.format(json.dumps(msg))
+    else:
+        string = '1:[{0}] ({1}) {2}->misp:{3}'.format(agent["id"], agent["name"], agent.get("ip", "any"), json.dumps(msg))
+    sock = socket(AF_UNIX, SOCK_DGRAM)
+    sock.connect(socket_addr)
+    sock.send(string.encode())
+    sock.close()
+
+# Read alert file
+alert_file = open(sys.argv[1])
+alert = json.loads(alert_file.read())
+alert_file.close()
+
+# Set up MISP constants
+misp_base_url = "https:/18.175.77.8//attributes/restSearch/"
+misp_api_auth_key = "zY4uzPWOuOafuB17cjL3jvln6bOwKfq9CJsujKO0"
+misp_apicall_headers = {
+    "Content-Type": "application/json",
+    "Authorization": "{}".format(misp_api_auth_key),
+    "Accept": "application/json"
+}
+
+# Initialize alert output
+alert_output = {}
+
+# Process alert based on event hash and type
+try:
+    event_hash = alert["syscheck"]["sha256_after"]
+    event_type = alert["rule"]["groups"][2]
+    event_occuring_to = alert["rule"]["groups"][3]
+    event_description = alert["rule"]["description"]
+    if event_hash is not None and event_type == 'syscheck_entry_modified' and event_occuring_to == 'syscheck_file' and event_description == 'Integrity checksum changed.':
+        wazuh_event_param = event_hash
+    else:
+        sys.exit()
+except (KeyError, IndexError, AttributeError):
+    sys.exit()
+
+# Search MISP for the extracted hash
+misp_search_value = "value:{}".format(wazuh_event_param)
+misp_search_url = "{}{}".format(misp_base_url, misp_search_value)
+
+try:
+    misp_api_response = requests.get(misp_search_url, headers=misp_apicall_headers, verify=False)
+    misp_api_response = misp_api_response.json()
+except requests.ConnectionError:
+    alert_output["misp"] = {"error": 'Connection Error to MISP API'}
+    alert_output["integration"] = "misp"
+    send_event(alert_output, alert["agent"])
+    sys.exit()
+
+# Check and process MISP response
+if "response" in misp_api_response and misp_api_response["response"]["Attribute"]:
+    attribute = misp_api_response["response"]["Attribute"][0]
+    alert_output["misp"] = {
+        "event_id": attribute["event_id"],
+        "category": attribute["category"],
+        "value": attribute["value"],
+        "type": attribute["type"],
+        "source": {"description": alert["rule"]["description"]}
+    }
+    send_event(alert_output, alert["agent"])
+else:
+    sys.exit()
