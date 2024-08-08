@@ -25,8 +25,8 @@ alert = json.loads(alert_file.read())
 alert_file.close()
 
 # Set up MISP constants
-misp_base_url = "https:/18.175.77.8//attributes/restSearch/"
-misp_api_auth_key = "zY4uzPWOuOafuB17cjL3jvln6bOwKfq9CJsujKO0"
+misp_base_url = "https:/misp-ip-here//attributes/restSearch/"
+misp_api_auth_key = "misp-api-you-created-here"
 misp_apicall_headers = {
     "Content-Type": "application/json",
     "Authorization": "{}".format(misp_api_auth_key),
