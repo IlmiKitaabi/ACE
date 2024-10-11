@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# Log function to write messages to /var/ossec/logs/active-responses.log in syslog format
+log_message() {
+    local priority="$1"
+    local message="$2"
+    echo "$(date '+%b %d %H:%M:%S') $(hostname) $(basename "$0"): [$priority] $message" >> /var/ossec/logs/active-responses.log
+}
+
+# Read the JSON message from STDIN
+read -r json_input
+
+# Log the received JSON input for debugging
+log_message "INFO" "Received JSON input: $json_input"
+
+# Parse the JSON message to extract necessary fields using jq
+command=$(echo "$json_input" | jq -r '.command')
+srcip=$(echo "$json_input" | jq -r '.parameters.alert.data.srcip')
+
+# Log the extracted command and srcip for debugging
+log_message "INFO" "Extracted command: $command"
+log_message "INFO" "Extracted srcip: $srcip"
+
+# Check if the command is "add" and srcip is not null
+if [[ "$command" == "add" && "$srcip" != "null" ]]; then
+    # Check if the IP already exists in the configuration file
+    if grep -q "<If \"%{HTTP:X-Forwarded-For} == '$srcip'\">" /etc/apache2/apache2.conf; then
+        log_message "INFO" "srcip '$srcip' is already in /etc/apache2/apache2.conf. Skipping addition."
+    else
+        # Append srcip to /etc/apache2/apache2.conf
+        echo -e "\n<If \"%{HTTP:X-Forwarded-For} == '$srcip'\">\n    Require all denied\n</If>" >> /etc/apache2/apache2.conf
+        log_message "INFO" "srcip '$srcip' is written in /etc/apache2/apache2.conf. Good Work."
+
+        # Reload Apache to apply changes
+        sudo systemctl reload apache2
+        if [[ $? -eq 0 ]]; then
+            log_message "INFO" "Apache reloaded successfully."
+        else
+            log_message "ERROR" "Failed to reload Apache."
+        fi
+    fi
+else
+    log_message "ERROR" "srcip is null or command is not 'add'."
+fi
